@@ -3,11 +3,16 @@ import random
 import shutil
 import tempfile
 import zipfile
+import json
 from wsgidav.dav_provider import DAVProvider, DAVCollection, DAVNonCollection
 from wsgidav import util
 from wsgiref.util import FileWrapper
+from data import merge_data_json
 
 # --- 自定义配置 ---
+# 从环境变量读取用户名，如果不存在则使用默认值 'admin'
+USERNAME = os.environ.get('USERNAME', 'admin')
+PASSWORD = os.environ.get('PASSWORD', 'admin')
 
 # 数据目录（与 dav.py 同级）
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
@@ -22,80 +27,85 @@ def upload(folder):
     处理上传并解压后的文件目录。
 
     Args:
-        folder:  解压后的文件所在的目录路径。
+        folder: 解压后的文件所在的目录路径。
     """
     print(f"Upload processing completed. Files are in: {folder}")
-    # 在这里添加你对上传文件的进一步处理逻辑
-    # 示例：遍历文件
-    for root, _, files in os.walk(folder):
-        for file in files:
-            print(f"  - File: {os.path.join(root, file)}")
-
-
-
-class CustomResource(DAVNonCollection):
-    """自定义的非集合资源（用于处理上传）"""
-
-    def __init__(self, path, environ):
-        super().__init__(path, environ)
-        self.temp_dir = None  # 临时目录
-
-    def get_etag(self):
-        """返回资源的 ETag"""
-        return None  # 上传资源不需要 ETag
-
-    def create_empty_resource(self, name):
-        # 创建空资源（这里实际上不创建，因为我们只处理上传的 zip）
-        return None
-
-    def create_collection(self, name):
-        # 不允许创建集合
-        return None
     
-    def handle_content_written(self, total_size):
-        pass # 不需要做任何事情
+    """
+    Step 1: 文件处理
+    - 对于${folder}/Data文件夹（注意大写）中的文件，拷贝到${folder}/DATA_DIR的对应位置中
+    - 如果已经存在同名文件则跳过
+    - 需要递归处理
+    """
+    
+    # 检查 Data 文件夹是否存在
+    data_folder = os.path.join(folder, "Data")
+    if not os.path.exists(data_folder):
+        print(f"Warning: Data folder not found in {folder}")
+        return
 
-    def begin_write(self, content_type=None):
-        # 准备接收上传文件，创建临时目录
-        self.temp_dir = tempfile.mkdtemp()
-        # 假设所有上传的文件都会到这个zipfile
-        self.zip_file_path = os.path.join(self.temp_dir, "uploaded.zip")  
-        return open(self.zip_file_path, "wb")
+    # 递归处理文件
+    for root, _, files in os.walk(data_folder):
+        # 计算相对路径，用于在目标目录中创建相同的目录结构
+        rel_path = os.path.relpath(root, data_folder)
+        target_dir = os.path.join(DATA_DIR, 'Data', rel_path)
 
-    def end_write(self, with_errors):
-        if with_errors:
-            # 上传出错，清理临时目录
-            if self.temp_dir:
-                shutil.rmtree(self.temp_dir)
-                self.temp_dir = None
+        # 确保目标目录存在
+        if not os.path.exists(target_dir):
+            os.makedirs(target_dir)
+
+        # 处理每个文件
+        for file in files:
+            source_file = os.path.join(root, file)
+            target_file = os.path.join(target_dir, file)
+
+            # 如果目标文件不存在，则复制
+            if not os.path.exists(target_file):
+                print(f"Copying {os.path.relpath(source_file, folder)} to {os.path.relpath(target_file, DATA_DIR)}")
+                shutil.copy2(source_file, target_file)
+            else:
+                print(f"Skipping {os.path.relpath(source_file, folder)} (already exists)")
+    
+    """
+    Step 2: 处理 data.json
+    - 检查 DATA_DIR 中是否存在 data.json 文件，如果不存在直接拷贝过去
+    - 否则：
+        - 分别读取两个 data.json 文件，转换为字典，保存到 local_json, upload_json 中
+        - 调用 merge_data_json(local_json, upload_json) 函数进行合并，返回值也是字典
+        - 将字典转换为 json 并保存到 DATA_DIR 中的 data.json 文件中
+    """
+    # 检查上传的文件中是否包含 data.json
+    upload_json_path = os.path.join(folder, "data.json")
+    if not os.path.exists(upload_json_path):
+        print("Warning: data.json not found in uploaded files")
+        return
+
+    # 目标 data.json 路径
+    local_json_path = os.path.join(DATA_DIR, "data.json")
+
+    try:
+        # 如果本地不存在 data.json，直接复制
+        if not os.path.exists(local_json_path):
+            print("Local data.json not found, copying uploaded file")
+            shutil.copy2(upload_json_path, local_json_path)
             return
 
-        # 检查是否为 zip 文件
-        if not zipfile.is_zipfile(self.zip_file_path):
-            print("Error: Uploaded file is not a zip file.")
-            if self.temp_dir:
-                shutil.rmtree(self.temp_dir)
-                self.temp_dir = None
-            return
+        # 读取两个 json 文件
+        with open(local_json_path, 'r', encoding='utf-8') as f:
+            local_json = json.load(f)
+        with open(upload_json_path, 'r', encoding='utf-8') as f:
+            upload_json = json.load(f)
 
-        # 解压 zip 文件
-        try:
-            with zipfile.ZipFile(self.zip_file_path, 'r') as zip_ref:
-                zip_ref.extractall(self.temp_dir)
-        except Exception as e:
-            print(f"Error extracting zip file: {e}")
-            if self.temp_dir:
-                shutil.rmtree(self.temp_dir)
-                self.temp_dir = None
-            return
+        # 合并 json 数据
+        merged_json = merge_data_json(local_json, upload_json)
 
-        # 调用 upload 函数
-        if self.temp_dir:
-            upload(self.temp_dir)
+        # 保存合并后的数据
+        with open(local_json_path, 'w', encoding='utf-8') as f:
+            json.dump(merged_json, f, ensure_ascii=False, indent=2)
+        print("Successfully merged data.json files")
 
-            #  (可选) 上传处理完成后，清理临时目录
-            # shutil.rmtree(self.temp_dir)
-            # self.temp_dir = None
+    except Exception as e:
+        print(f"Error processing data.json: {e}")
 
 
 class DataDirCollection(DAVCollection):
@@ -118,6 +128,7 @@ class RootCollection(DAVCollection):
     def get_member(self, name):
         if name == "cherry-studio.backup.zip":
             return BackupZipResource(self.path + name, self.environ)
+        # 对其他所有路径返回一个只读的资源
         return DAVNonCollection(self.path + name, self.environ)
 
 
@@ -200,9 +211,18 @@ class BackupZipResource(DAVNonCollection):
             if not zipfile.is_zipfile(self.zip_file_path):
                 raise Exception("Uploaded file is not a zip file")
 
-            # 解压到数据目录
+            # 先解压到临时目录
+            extract_dir = os.path.join(self.temp_dir, "extracted")
+            os.makedirs(extract_dir)
             with zipfile.ZipFile(self.zip_file_path, 'r') as zip_ref:
-                zip_ref.extractall(self.data_dir)
+                zip_ref.extractall(extract_dir)
+
+            # 调用上传回调函数
+            upload(extract_dir)
+
+            # # 解压到数据目录
+            # with zipfile.ZipFile(self.zip_file_path, 'r') as zip_ref:
+            #     zip_ref.extractall(self.data_dir)
 
         except Exception as e:
             print(f"Error processing uploaded file: {e}")
@@ -246,12 +266,12 @@ class CustomProvider(DAVProvider):
         if path == "/" or path == "":
             return RootCollection("/", environ)
         
-        # 虚拟的下载文件
+        # 只处理虚拟的备份文件路径
         if path == "/cherry-studio.backup.zip":
             return BackupZipResource(path, environ)
 
-        # 所有其他路径都视为上传请求, 交给 CustomResource 处理
-        return CustomResource(path, environ)
+        # 其他所有路径都返回只读资源
+        return DAVNonCollection(path, environ)
 
 # --- WSGI 应用配置 ---
 
@@ -266,8 +286,8 @@ config = {
     "simple_dc": {
         "user_mapping": {
             "*": {  # 对所有路径生效
-                "admin": {  # 用户名
-                    "password": "password",  # 密码
+                USERNAME: {  # 用户名
+                    "password": PASSWORD,  # 密码
                     "description": "WebDAV Admin",
                     "roles": ["admin", "write", "read"]
                 }
