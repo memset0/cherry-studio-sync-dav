@@ -9,10 +9,10 @@ from wsgidav import util
 from wsgiref.util import FileWrapper
 from data import merge_data_json
 
-# --- 自定义配置 ---
-# 从环境变量读取用户名，如果不存在则使用默认值 'admin'
-USERNAME = os.environ.get('USERNAME', 'admin')
-PASSWORD = os.environ.get('PASSWORD', 'admin')
+# 从环境变量读取用户名和密码，如果不存在则使用默认值
+USERNAME = os.environ.get('CHERRY_DAV_USERNAME', 'admin')
+PASSWORD = os.environ.get('CHERRY_DAV_PASSWORD', '123456')
+print(f'User {USERNAME} with password: {PASSWORD}')
 
 # 数据目录（与 dav.py 同级）
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
@@ -20,7 +20,6 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
 
-# --- 上传回调函数 (示例) ---
 
 def upload(folder):
     """
