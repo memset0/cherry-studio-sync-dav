@@ -317,9 +317,9 @@ if __name__ == "__main__":
         "wsgi_app": app,
     }
     server = wsgi.Server(**server_args)
-    print("服务器已启动：http://127.0.0.1:8080/")
+    print("Server start at http://127.0.0.1:8080/")
     try:
         server.start()
     except KeyboardInterrupt:
-        print("服务器关闭")
+        print("Server stopped.")
         server.stop()
