@@ -8,6 +8,8 @@ services:
     working_dir: /app  # 设置容器内的工作目录
     volumes:
       - .:/app  # 挂载当前目录到容器内 `/app`
+    ports:
+      - "4040:8080" # 将容器的8080端口映射到主机的4040端口
     environment:
       - USERNAME=admin  # 设置 WebDAV 访问用户名
       - PASSWORD=123456  # 设置 WebDAV 访问密码
