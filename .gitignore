@@ -2,6 +2,7 @@
 /tmp
 /data
 /uploads
+/docker-compose.yml
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
